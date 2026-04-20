@@ -8,6 +8,21 @@ Requires **Blender 3.0 or later**.
 
 ## Installation
 
+### From Add-on Repository (Blender feature)
+
+Repository URL for Blender:
+
+https://blender-addon.hidekisaito.com/index.json
+
+Catalog website (human-browsable):
+
+https://blender-addon.hidekisaito.com/
+
+1. In Blender, open **Edit > Preferences > Get Extensions**.
+2. Open the repositories/settings area and add a custom repository URL.
+3. Use `https://blender-addon.hidekisaito.com/index.json` as the repository URL.
+4. Refresh repositories, find **Beat Flipper Driver**, then install/enable it.
+
 ### From a release zip (recommended)
 
 1. Download `beat_flipper_driver-<version>.zip` from the [Releases](../../releases) page.
@@ -120,8 +135,8 @@ The included GitHub Actions workflow (`.github/workflows/package.yml`) automatic
 To publish a new release, push a tag:
 
 ```bash
-git tag v1.3.0
-git push origin v1.3.0
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 ---

@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Beat Flipper Driver",
     "author": "Hideki Saito",
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Beat Flip",
     "description": "Adds BPM-based custom-property drivers to selected objects",
@@ -23,14 +23,14 @@ DRIVER_PROP_NAME = "beat_flipper_value"
 PHASE_PROP_NAME = "beat_flipper_phase"
 
 
-def _next_driver_property_name(obj):
-    """Return the next available beat flipper property name for an object."""
-    if DRIVER_PROP_NAME not in obj:
+def _next_driver_property_name(id_block):
+    """Return the next available beat flipper property name for an ID block."""
+    if DRIVER_PROP_NAME not in id_block:
         return DRIVER_PROP_NAME
 
     max_index = 0
     prefix = f"{DRIVER_PROP_NAME}_"
-    for key in obj.keys():
+    for key in id_block.keys():
         if not key.startswith(prefix):
             continue
 
@@ -54,14 +54,14 @@ def _is_beat_flipper_phase_property(prop_name):
     return prop_name == PHASE_PROP_NAME or prop_name.startswith(f"{PHASE_PROP_NAME}_")
 
 
-def _latest_driver_property_name(obj):
-    if DRIVER_PROP_NAME not in obj:
+def _latest_driver_property_name(id_block):
+    if DRIVER_PROP_NAME not in id_block:
         return None
 
     latest_name = DRIVER_PROP_NAME
     latest_index = 0
     prefix = f"{DRIVER_PROP_NAME}_"
-    for key in obj.keys():
+    for key in id_block.keys():
         if not key.startswith(prefix):
             continue
 
@@ -86,23 +86,28 @@ def _build_expression(
     object_random_value_b,
     object_seed,
 ):
+    time_expr = f"(frame_var + {phase:.6f}) / {interval_frames:.6f}"
+    step_expr = f"floor({time_expr})"
+    parity_expr = f"(0.5 - 0.5 * cos(({step_expr}) * 3.141592653589793))"
+
     if value_mode == "RANDOM":
         if randomization_type == "OBJECT_CONSTANT":
             return (
-                f"{object_random_value_a:.6f} if (floor((frame_var + {phase:.6f}) / {interval_frames:.6f}) % 2) == 0"
+                f"{object_random_value_a:.6f} if ({parity_expr}) == 0"
                 f" else {object_random_value_b:.6f}"
             )
 
         # Deterministic pseudo-random number per step for stable playback/scrubbing.
         # object_seed shifts the hash input so each object produces its own sequence
         # when object_value_scope is PER_OBJECT; it is 0.0 for SHARED scope.
-        return (
-            f"{min_value:.6f} + ((sin((floor((frame_var + {phase:.6f}) / {interval_frames:.6f}))"
-            f" * 12.9898 + {object_seed:.6f} + 78.233) * 43758.5453) % 1.0) * ({(max_value - min_value):.6f})"
+        current_hash = (
+            f"(sin(({step_expr}) * 12.9898 + {object_seed:.6f} + 78.233) * 43758.5453)"
         )
+        current_rand = f"(({current_hash}) - floor({current_hash}))"
+        return f"{min_value:.6f} + ({current_rand}) * ({(max_value - min_value):.6f})"
 
     return (
-        f"{min_value:.6f} if (floor((frame_var + {phase:.6f}) / {interval_frames:.6f}) % 2) == 0"
+        f"{min_value:.6f} if ({parity_expr}) == 0"
         f" else {max_value:.6f}"
     )
 
@@ -123,6 +128,15 @@ def _wrap_frame_range(expr, use_start, start_frame, use_end, end_frame):
 
 
 class BeatFlipperSettings(PropertyGroup):
+    target_mode: EnumProperty(
+        name="Target",
+        description="Where to add the driver property",
+        items=[
+            ("OBJECT", "Object", "Add driver property on the object"),
+            ("DATA", "Object Data", "Add driver property on object data (mesh, curve, etc.)"),
+        ],
+        default="OBJECT",
+    )
     min_value: FloatProperty(
         name="Min",
         description="Minimum output value",
@@ -258,10 +272,20 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
         shared_value_b = random.uniform(settings.min_value, settings.max_value)
         shared_seed = 0.0
 
+        added_count = 0
+        skipped_no_data = 0
+
         for obj in selected_objects:
-            driver_prop_name = _next_driver_property_name(obj)
+            target_block = obj
+            if settings.target_mode == "DATA":
+                if obj.data is None:
+                    skipped_no_data += 1
+                    continue
+                target_block = obj.data
+
+            driver_prop_name = _next_driver_property_name(target_block)
             phase_prop_name = _phase_property_name(driver_prop_name)
-            obj[driver_prop_name] = settings.min_value
+            target_block[driver_prop_name] = settings.min_value
 
             if is_shared:
                 object_random_value_a = shared_value_a
@@ -275,11 +299,11 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
             phase = 0.0
             if settings.sync_mode == "RANDOMIZED":
                 phase = random.uniform(0.0, interval_frames)
-                obj[phase_prop_name] = phase
+                target_block[phase_prop_name] = phase
             else:
-                obj[phase_prop_name] = 0.0
+                target_block[phase_prop_name] = 0.0
 
-            fcurve = obj.driver_add(f'["{driver_prop_name}"]')
+            fcurve = target_block.driver_add(f'["{driver_prop_name}"]')
             driver = fcurve.driver
             driver.type = "SCRIPTED"
 
@@ -311,8 +335,17 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
                 use_end=settings.use_end_frame,
                 end_frame=settings.end_frame,
             )
+            added_count += 1
 
-        self.report({"INFO"}, f"Added driver on {len(selected_objects)} object(s)")
+        if added_count == 0 and settings.target_mode == "DATA":
+            self.report({"ERROR"}, "No selected objects have object data")
+            return {"CANCELLED"}
+
+        msg = f"Added driver on {added_count} target(s)"
+        if skipped_no_data > 0:
+            msg += f"; skipped {skipped_no_data} object(s) without data"
+
+        self.report({"INFO"}, msg)
         return {"FINISHED"}
 
 
@@ -323,6 +356,7 @@ class OBJECT_OT_clear_beat_flipper_drivers(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
+        settings = context.scene.beat_flipper_settings
         selected_objects = context.selected_objects
 
         if not selected_objects:
@@ -330,22 +364,34 @@ class OBJECT_OT_clear_beat_flipper_drivers(Operator):
             return {"CANCELLED"}
 
         removed_drivers = 0
+        skipped_no_data = 0
         for obj in selected_objects:
-            if obj.animation_data and obj.animation_data.drivers:
-                data_paths = [fcurve.data_path for fcurve in obj.animation_data.drivers]
+            target_block = obj
+            if settings.target_mode == "DATA":
+                if obj.data is None:
+                    skipped_no_data += 1
+                    continue
+                target_block = obj.data
+
+            if target_block.animation_data and target_block.animation_data.drivers:
+                data_paths = [fcurve.data_path for fcurve in target_block.animation_data.drivers]
                 for data_path in data_paths:
                     if data_path.startswith(f'["{DRIVER_PROP_NAME}'):
                         try:
-                            obj.driver_remove(data_path)
+                            target_block.driver_remove(data_path)
                             removed_drivers += 1
                         except TypeError:
                             pass
 
-            for key in list(obj.keys()):
+            for key in list(target_block.keys()):
                 if _is_beat_flipper_property(key) or _is_beat_flipper_phase_property(key):
-                    del obj[key]
+                    del target_block[key]
 
-        self.report({"INFO"}, f"Removed {removed_drivers} driver(s)")
+        msg = f"Removed {removed_drivers} driver(s)"
+        if skipped_no_data > 0:
+            msg += f"; skipped {skipped_no_data} object(s) without data"
+
+        self.report({"INFO"}, msg)
         return {"FINISHED"}
 
 
@@ -356,6 +402,7 @@ class OBJECT_OT_remove_latest_beat_flipper_driver(Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
+        settings = context.scene.beat_flipper_settings
         selected_objects = context.selected_objects
 
         if not selected_objects:
@@ -363,26 +410,38 @@ class OBJECT_OT_remove_latest_beat_flipper_driver(Operator):
             return {"CANCELLED"}
 
         removed_drivers = 0
+        skipped_no_data = 0
         for obj in selected_objects:
-            latest_prop = _latest_driver_property_name(obj)
+            target_block = obj
+            if settings.target_mode == "DATA":
+                if obj.data is None:
+                    skipped_no_data += 1
+                    continue
+                target_block = obj.data
+
+            latest_prop = _latest_driver_property_name(target_block)
             if not latest_prop:
                 continue
 
             data_path = f'["{latest_prop}"]'
             try:
-                obj.driver_remove(data_path)
+                target_block.driver_remove(data_path)
                 removed_drivers += 1
             except TypeError:
                 pass
 
-            if latest_prop in obj:
-                del obj[latest_prop]
+            if latest_prop in target_block:
+                del target_block[latest_prop]
 
             phase_prop = _phase_property_name(latest_prop)
-            if phase_prop in obj:
-                del obj[phase_prop]
+            if phase_prop in target_block:
+                del target_block[phase_prop]
 
-        self.report({"INFO"}, f"Removed latest driver on {removed_drivers} object(s)")
+        msg = f"Removed latest driver on {removed_drivers} target(s)"
+        if skipped_no_data > 0:
+            msg += f"; skipped {skipped_no_data} object(s) without data"
+
+        self.report({"INFO"}, msg)
         return {"FINISHED"}
 
 
@@ -398,6 +457,7 @@ class VIEW3D_PT_beat_flipper_panel(Panel):
         settings = context.scene.beat_flipper_settings
 
         col = layout.column(align=True)
+        col.prop(settings, "target_mode")
         col.prop(settings, "min_value")
         col.prop(settings, "max_value")
         col.prop(settings, "bpm")
