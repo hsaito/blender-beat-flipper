@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Beat Flipper Driver",
     "author": "Hideki Saito",
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Beat Flip",
     "description": "Adds BPM-based custom-property drivers to selected objects",
