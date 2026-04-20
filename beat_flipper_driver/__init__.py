@@ -25,7 +25,7 @@ PHASE_PROP_NAME = "beat_flipper_phase"
 
 
 def _indexed_driver_property_name(index):
-    return f"{DRIVER_PROP_NAME}_{index:04d}"
+    return f"{DRIVER_PROP_NAME}.{index:03d}"
 
 
 def _next_driver_property_name(id_block):
@@ -34,13 +34,17 @@ def _next_driver_property_name(id_block):
         return DRIVER_PROP_NAME
 
     max_index = 0
-    prefix = f"{DRIVER_PROP_NAME}_"
     for key in id_block.keys():
-        if not key.startswith(prefix):
-            continue
+        dot_prefix = f"{DRIVER_PROP_NAME}."
+        underscore_prefix = f"{DRIVER_PROP_NAME}_"
 
-        suffix = key[len(prefix):]
-        if suffix.isdigit():
+        suffix = None
+        if key.startswith(dot_prefix):
+            suffix = key[len(dot_prefix):]
+        elif key.startswith(underscore_prefix):
+            suffix = key[len(underscore_prefix):]
+
+        if suffix and suffix.isdigit():
             max_index = max(max_index, int(suffix))
 
     return _indexed_driver_property_name(max_index + 1)
@@ -52,23 +56,35 @@ def _phase_property_name(driver_prop_name):
 
 
 def _is_beat_flipper_property(prop_name):
-    return prop_name == DRIVER_PROP_NAME or prop_name.startswith(f"{DRIVER_PROP_NAME}_")
+    return (
+        prop_name == DRIVER_PROP_NAME
+        or prop_name.startswith(f"{DRIVER_PROP_NAME}.")
+        or prop_name.startswith(f"{DRIVER_PROP_NAME}_")
+    )
 
 
 def _is_beat_flipper_phase_property(prop_name):
-    return prop_name == PHASE_PROP_NAME or prop_name.startswith(f"{PHASE_PROP_NAME}_")
+    return (
+        prop_name == PHASE_PROP_NAME
+        or prop_name.startswith(f"{PHASE_PROP_NAME}.")
+        or prop_name.startswith(f"{PHASE_PROP_NAME}_")
+    )
 
 
 def _latest_driver_property_name(id_block):
     latest_name = DRIVER_PROP_NAME if DRIVER_PROP_NAME in id_block else None
     latest_index = 0
-    prefix = f"{DRIVER_PROP_NAME}_"
     for key in id_block.keys():
-        if not key.startswith(prefix):
-            continue
+        dot_prefix = f"{DRIVER_PROP_NAME}."
+        underscore_prefix = f"{DRIVER_PROP_NAME}_"
 
-        suffix = key[len(prefix):]
-        if suffix.isdigit():
+        suffix = None
+        if key.startswith(dot_prefix):
+            suffix = key[len(dot_prefix):]
+        elif key.startswith(underscore_prefix):
+            suffix = key[len(underscore_prefix):]
+
+        if suffix and suffix.isdigit():
             idx = int(suffix)
             if idx > latest_index:
                 latest_index = idx
