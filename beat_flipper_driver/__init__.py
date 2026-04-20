@@ -106,6 +106,68 @@ def _remove_fcurves_for_property(id_block, property_name):
     return len(to_remove)
 
 
+def _configure_property_ui(id_block, property_name, min_value, max_value):
+    """Register ID-property UI metadata so Blender shows the evaluated value cleanly."""
+    ui_data = id_block.id_properties_ui(property_name)
+    ui_data.update(
+        default=min_value,
+        min=min_value,
+        max=max_value,
+        soft_min=min_value,
+        soft_max=max_value,
+        description="Beat Flipper output value",
+    )
+
+
+def _prime_keyed_property_visibility(id_block):
+    """Work around Blender not refreshing the first keyed ID property until a driver exists once."""
+    temp_prop_name = "_beat_flipper_prime"
+    suffix = 1
+    while temp_prop_name in id_block:
+        temp_prop_name = f"_beat_flipper_prime_{suffix}"
+        suffix += 1
+
+    id_block[temp_prop_name] = 0.0
+
+    try:
+        fcurve = id_block.driver_add(f'["{temp_prop_name}"]')
+        driver = fcurve.driver
+        driver.type = "SCRIPTED"
+        driver.expression = "0.0"
+        id_block.driver_remove(f'["{temp_prop_name}"]')
+    finally:
+        if temp_prop_name in id_block:
+            del id_block[temp_prop_name]
+
+
+def _refresh_blender_ui(context, id_block=None):
+    """Force dependency and UI refresh so driven custom property values redraw."""
+    if id_block is not None and hasattr(id_block, "update_tag"):
+        id_block.update_tag()
+
+    context.view_layer.update()
+    for area in context.screen.areas:
+        area.tag_redraw()
+
+
+def _force_driver_evaluation(scene, current_frame):
+    """Force driver reevaluation by moving one frame and restoring the current frame."""
+    frame_start = scene.frame_start
+    frame_end = scene.frame_end
+
+    if frame_end > current_frame:
+        temp_frame = current_frame + 1
+    elif frame_start < current_frame:
+        temp_frame = current_frame - 1
+    else:
+        temp_frame = None
+
+    if temp_frame is not None:
+        scene.frame_set(temp_frame)
+
+    scene.frame_set(current_frame)
+
+
 def _build_expression(
     min_value,
     max_value,
@@ -392,6 +454,12 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
             driver_prop_name = _next_driver_property_name(target_block)
             phase_prop_name = _phase_property_name(driver_prop_name)
             target_block[driver_prop_name] = settings.min_value
+            _configure_property_ui(
+                id_block=target_block,
+                property_name=driver_prop_name,
+                min_value=settings.min_value,
+                max_value=settings.max_value,
+            )
 
             if is_shared:
                 object_random_value_a = shared_value_a
@@ -416,6 +484,9 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
                     target_block[phase_prop_name] = 0.0
 
             if is_bake_mode:
+                if not (target_block.animation_data and target_block.animation_data.drivers):
+                    _prime_keyed_property_visibility(target_block)
+
                 previous_step = None
                 for frame in range(settings.start_frame, settings.end_frame + 1):
                     current_step = _step_at_frame(interval_frames, phase, frame)
@@ -476,7 +547,8 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
                 )
             added_count += 1
 
-        scene.frame_set(current_frame)
+        _force_driver_evaluation(scene, current_frame)
+        _refresh_blender_ui(context)
 
         if added_count == 0 and settings.target_mode == "DATA":
             self.report({"ERROR"}, "No selected objects have object data")
@@ -489,9 +561,7 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
 
         self.report({"INFO"}, msg)
 
-        # Refresh the UI to show updated driver/property state
-        for area in context.screen.areas:
-            area.tag_redraw()
+        _refresh_blender_ui(context)
 
         return {"FINISHED"}
 
@@ -542,9 +612,7 @@ class OBJECT_OT_clear_beat_flipper_drivers(Operator):
 
         self.report({"INFO"}, msg)
 
-        # Refresh the UI to show updated driver/property state
-        for area in context.screen.areas:
-            area.tag_redraw()
+        _refresh_blender_ui(context)
 
         return {"FINISHED"}
 
@@ -603,9 +671,7 @@ class OBJECT_OT_remove_latest_beat_flipper_driver(Operator):
 
         self.report({"INFO"}, msg)
 
-        # Refresh the UI to show updated driver/property state
-        for area in context.screen.areas:
-            area.tag_redraw()
+        _refresh_blender_ui(context)
 
         return {"FINISHED"}
 
