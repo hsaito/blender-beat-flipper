@@ -9,6 +9,7 @@ bl_info = {
     "location": "View3D > Sidebar > Beat Flip",
     "description": "Adds BPM-based custom-property drivers to selected objects",
     "category": "Animation",
+    "support": "COMMUNITY"
 }
 
 import random

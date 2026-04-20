@@ -1,0 +1,16 @@
+schema_version = "1.0.0"
+
+id = "beat_flipper_driver"
+version = "1.0.0"
+name = "Beat Flipper Driver"
+tagline = "Adds BPM-based custom-property drivers to selected objects"
+maintainer = "Hideki Saito"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-2.0-or-later"]
+
+website = "https://github.com/hsaito/blender-beat-flipper"
+documentation = "https://github.com/hsaito/blender-beat-flipper/blob/master/README.md"
+tracker = "https://github.com/hsaito/blender-beat-flipper/issues"
