@@ -100,29 +100,27 @@ def _build_expression(
     object_random_value_b,
     object_seed,
 ):
-    time_expr = f"(frame_var + {phase:.6f}) / {interval_frames:.6f}"
+    time_expr = f"(frame_var + {phase:.1f}) / {interval_frames:.1f}"
     step_expr = f"floor({time_expr})"
-    parity_expr = f"(0.5 - 0.5 * cos(({step_expr}) * 3.141592653589793))"
+    parity_expr = f"(0.5 - 0.5 * cos({step_expr} * 3.141592653589793))"
 
     if value_mode == "RANDOM":
         if randomization_type == "OBJECT_CONSTANT":
             # Pure arithmetic alternation (no if/else in driver expression).
             return (
-                f"{object_random_value_a:.6f}"
-                f" + ({(object_random_value_b - object_random_value_a):.6f}) * ({parity_expr})"
+                f"{object_random_value_a:.1f}"
+                f" + ({(object_random_value_b - object_random_value_a):.1f}) * {parity_expr}"
             )
 
         # Deterministic pseudo-random number per step for stable playback/scrubbing.
         # object_seed shifts the hash input so each object produces its own sequence
         # when object_value_scope is PER_OBJECT; it is 0.0 for SHARED scope.
-        current_hash = (
-            f"(sin(({step_expr}) * 12.9898 + {object_seed:.6f} + 78.233) * 43758.5453)"
-        )
-        current_rand = f"(({current_hash}) - floor({current_hash}))"
-        return f"{min_value:.6f} + ({current_rand}) * ({(max_value - min_value):.6f})"
+        sin_expr = f"(sin({step_expr} * 12.9898 + {object_seed:.1f} + 78.233) * 43758.5453)"
+        current_rand = f"{sin_expr} - floor({sin_expr})"
+        return f"{min_value:.1f} + ({current_rand}) * {(max_value - min_value):.1f}"
 
     # Pure arithmetic alternation for static mode.
-    return f"{min_value:.6f} + ({(max_value - min_value):.6f}) * ({parity_expr})"
+    return f"{min_value:.1f} + ({(max_value - min_value):.1f}) * {parity_expr}"
 
 
 def _wrap_frame_range(expr, start_frame, end_frame):
@@ -188,7 +186,10 @@ def _apply_baked_interpolation(id_block, prop_name, interpolation_mode):
 
 
 def _on_bake_toggle(self, _context):
-    """Disable interpolation when bake mode is disabled."""
+    """Disable interpolation and sync/offset when bake mode is disabled or enabled."""
+    if self.bake_as_keyed_property:
+        # In keyed mode: disable sync options and offset (animation starts at Start Frame)
+        self.sync_mode = "SYNC"
     if not self.bake_as_keyed_property:
         self.bake_use_interpolation = False
 
@@ -269,12 +270,19 @@ class BeatFlipperSettings(PropertyGroup):
     )
     sync_mode: EnumProperty(
         name="Transition Mode",
-        description="How transitions align across selected objects",
+        description="How transitions align across selected objects (disabled in keyed mode)",
         items=[
             ("SYNC", "Synchronized", "All objects change at the same time"),
             ("RANDOMIZED", "Randomized Between Objects", "Each object gets a random phase offset"),
         ],
         default="SYNC",
+    )
+    phase_offset: FloatProperty(
+        name="Phase Offset",
+        description="Offset the beat pattern start in frames (disabled in keyed mode)",
+        default=0.0,
+        soft_min=-240.0,
+        soft_max=240.0,
     )
     start_frame: IntProperty(
         name="Start Frame",
@@ -331,6 +339,8 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
 
         scene = context.scene
         fps = scene.render.fps / scene.render.fps_base
+        # interval_frames = seconds_per_beat * frames_per_second
+        # = (60 / bpm) * fps
         interval_frames = (60.0 / settings.bpm) * fps
 
         if interval_frames <= 0.0:
@@ -375,12 +385,18 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
                 object_random_value_b = random.uniform(settings.min_value, settings.max_value)
                 object_seed = random.uniform(0.0, 1000.0)
 
-            phase = 0.0
-            if settings.sync_mode == "RANDOMIZED":
-                phase = random.uniform(0.0, interval_frames)
-                target_block[phase_prop_name] = phase
-            else:
+            # In keyed mode, start beat pattern at Start frame (phase aligns beat 0 to frame start_frame)
+            # In driver mode, use sync_mode and phase_offset settings
+            if is_bake_mode:
+                phase = float(-settings.start_frame)
                 target_block[phase_prop_name] = 0.0
+            else:
+                if settings.sync_mode == "RANDOMIZED":
+                    phase = random.uniform(0.0, interval_frames)
+                    target_block[phase_prop_name] = phase
+                else:
+                    phase = float(settings.phase_offset)
+                    target_block[phase_prop_name] = 0.0
 
             if is_bake_mode:
                 previous_step = None
@@ -601,7 +617,11 @@ class VIEW3D_PT_beat_flipper_panel(Panel):
         if settings.value_mode == "RANDOM":
             col.prop(settings, "randomization_type")
             col.prop(settings, "object_value_scope")
-        col.prop(settings, "sync_mode")
+        
+        # Hide sync and offset in keyed mode
+        if not settings.bake_as_keyed_property:
+            col.prop(settings, "sync_mode")
+            col.prop(settings, "phase_offset")
 
         layout.separator()
         box = layout.box()
