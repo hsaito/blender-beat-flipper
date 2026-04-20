@@ -12,6 +12,7 @@ bl_info = {
     "support": "COMMUNITY"
 }
 
+import math
 import random
 
 import bpy
@@ -75,6 +76,19 @@ def _latest_driver_property_name(id_block):
     return latest_name
 
 
+def _remove_fcurves_for_property(id_block, property_name):
+    """Remove action fcurves bound to a custom property data path."""
+    if not id_block.animation_data or not id_block.animation_data.action:
+        return 0
+
+    data_path = f'["{property_name}"]'
+    action = id_block.animation_data.action
+    to_remove = [fcurve for fcurve in action.fcurves if fcurve.data_path == data_path]
+    for fcurve in to_remove:
+        action.fcurves.remove(fcurve)
+    return len(to_remove)
+
+
 def _build_expression(
     min_value,
     max_value,
@@ -92,9 +106,10 @@ def _build_expression(
 
     if value_mode == "RANDOM":
         if randomization_type == "OBJECT_CONSTANT":
+            # Pure arithmetic alternation (no if/else in driver expression).
             return (
-                f"{object_random_value_a:.6f} if ({parity_expr}) == 0"
-                f" else {object_random_value_b:.6f}"
+                f"{object_random_value_a:.6f}"
+                f" + ({(object_random_value_b - object_random_value_a):.6f}) * ({parity_expr})"
             )
 
         # Deterministic pseudo-random number per step for stable playback/scrubbing.
@@ -106,25 +121,76 @@ def _build_expression(
         current_rand = f"(({current_hash}) - floor({current_hash}))"
         return f"{min_value:.6f} + ({current_rand}) * ({(max_value - min_value):.6f})"
 
-    return (
-        f"{min_value:.6f} if ({parity_expr}) == 0"
-        f" else {max_value:.6f}"
-    )
+    # Pure arithmetic alternation for static mode.
+    return f"{min_value:.6f} + ({(max_value - min_value):.6f}) * ({parity_expr})"
 
 
-def _wrap_frame_range(expr, use_start, start_frame, use_end, end_frame):
-    """Wrap a driver expression so it returns 0.0 outside the active frame range."""
-    if not use_start and not use_end:
-        return expr
+def _wrap_frame_range(expr, start_frame, end_frame):
+    """Gate a driver expression to 0.0 outside the active frame range."""
+    # Use boolean arithmetic instead of a conditional expression because Blender's
+    # driver parser can reject nested if/else forms in some builds.
+    gate = f"((frame_var >= {start_frame}) * (frame_var <= {end_frame}))"
+    return f"({expr}) * {gate}"
 
-    conditions = []
-    if use_start:
-        conditions.append(f"frame_var >= {start_frame}")
-    if use_end:
-        conditions.append(f"frame_var <= {end_frame}")
 
-    guard = " and ".join(conditions)
-    return f"({expr}) if ({guard}) else 0.0"
+def _evaluate_value(
+    min_value,
+    max_value,
+    interval_frames,
+    value_mode,
+    phase,
+    randomization_type,
+    object_random_value_a,
+    object_random_value_b,
+    object_seed,
+    frame,
+):
+    """Evaluate the beat-flipper value numerically for a given frame."""
+    time_value = (frame + phase) / interval_frames
+    step = int(time_value // 1)
+    parity = step % 2
+
+    if value_mode == "RANDOM":
+        if randomization_type == "OBJECT_CONSTANT":
+            return object_random_value_a if parity == 0 else object_random_value_b
+
+        hash_value = math.sin(step * 12.9898 + object_seed + 78.233) * 43758.5453
+        random_value = hash_value - math.floor(hash_value)
+        return min_value + random_value * (max_value - min_value)
+
+    return min_value if parity == 0 else max_value
+
+
+def _step_at_frame(interval_frames, phase, frame):
+    """Return the current beat step index for a frame."""
+    return int(math.floor((frame + phase) / interval_frames))
+
+
+def _apply_baked_interpolation(id_block, prop_name, interpolation_mode):
+    """Set interpolation style for baked keyframes on an ID custom property."""
+    if not id_block.animation_data or not id_block.animation_data.action:
+        return
+
+    data_path = f'["{prop_name}"]'
+    for fcurve in id_block.animation_data.action.fcurves:
+        if fcurve.data_path != data_path:
+            continue
+
+        for point in fcurve.keyframe_points:
+            if interpolation_mode == "STEP":
+                point.interpolation = "CONSTANT"
+            elif interpolation_mode == "LERP":
+                point.interpolation = "LINEAR"
+            else:
+                point.interpolation = "BEZIER"
+                point.handle_left_type = "AUTO_CLAMPED"
+                point.handle_right_type = "AUTO_CLAMPED"
+
+
+def _on_bake_toggle(self, _context):
+    """Disable interpolation when bake mode is disabled."""
+    if not self.bake_as_keyed_property:
+        self.bake_use_interpolation = False
 
 
 class BeatFlipperSettings(PropertyGroup):
@@ -210,25 +276,38 @@ class BeatFlipperSettings(PropertyGroup):
         ],
         default="SYNC",
     )
-    use_start_frame: BoolProperty(
-        name="Limit Start",
-        description="Clamp beat output to zero before this frame",
-        default=False,
-    )
     start_frame: IntProperty(
         name="Start Frame",
-        description="First frame where the beat driver is active",
+        description="First frame where the beat driver is active (required for keyed mode)",
         default=1,
-    )
-    use_end_frame: BoolProperty(
-        name="Limit End",
-        description="Clamp beat output to zero after this frame",
-        default=False,
     )
     end_frame: IntProperty(
         name="End Frame",
-        description="Last frame where the beat driver is active",
+        description="Last frame where the beat driver is active (required for keyed mode)",
         default=250,
+    )
+    bake_as_keyed_property: BoolProperty(
+        name="Bake As Keyed Property",
+        description=(
+            "Insert keyframes for the custom property within the enabled frame range "
+            "instead of creating a scripted driver"
+        ),
+        default=False,
+        update=_on_bake_toggle,
+    )
+    bake_use_interpolation: BoolProperty(
+        name="Use Interpolation",
+        description="Interpolate between baked change points",
+        default=False,
+    )
+    bake_interpolation_mode: EnumProperty(
+        name="Interpolation Type",
+        description="Interpolation style for baked keyframes",
+        items=[
+            ("LERP", "Lerp (Linear)", "Use linear interpolation between keys"),
+            ("SMOOTHSTEP", "Smoothstep", "Use smooth Bezier interpolation between keys"),
+        ],
+        default="LERP",
     )
 
 
@@ -258,13 +337,12 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
             self.report({"ERROR"}, "Calculated interval must be greater than zero")
             return {"CANCELLED"}
 
-        if (
-            settings.use_start_frame
-            and settings.use_end_frame
-            and settings.end_frame < settings.start_frame
-        ):
+        if settings.end_frame < settings.start_frame:
             self.report({"ERROR"}, "End Frame must be greater than or equal to Start Frame")
             return {"CANCELLED"}
+
+        is_bake_mode = settings.bake_as_keyed_property
+        use_bake_interpolation = is_bake_mode and settings.bake_use_interpolation
 
         # Pre-sample shared values once when all objects should share the same randoms.
         is_shared = settings.object_value_scope == "SHARED"
@@ -274,6 +352,7 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
 
         added_count = 0
         skipped_no_data = 0
+        current_frame = scene.frame_current
 
         for obj in selected_objects:
             target_block = obj
@@ -303,49 +382,84 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
             else:
                 target_block[phase_prop_name] = 0.0
 
-            fcurve = target_block.driver_add(f'["{driver_prop_name}"]')
-            driver = fcurve.driver
-            driver.type = "SCRIPTED"
+            if is_bake_mode:
+                previous_step = None
+                for frame in range(settings.start_frame, settings.end_frame + 1):
+                    current_step = _step_at_frame(interval_frames, phase, frame)
+                    if previous_step is None or current_step != previous_step:
+                        baked_value = _evaluate_value(
+                            min_value=settings.min_value,
+                            max_value=settings.max_value,
+                            interval_frames=interval_frames,
+                            value_mode=settings.value_mode,
+                            phase=phase,
+                            randomization_type=settings.randomization_type,
+                            object_random_value_a=object_random_value_a,
+                            object_random_value_b=object_random_value_b,
+                            object_seed=object_seed,
+                            frame=frame,
+                        )
+                        target_block[driver_prop_name] = baked_value
+                        target_block.keyframe_insert(data_path=f'["{driver_prop_name}"]', frame=frame)
+                    previous_step = current_step
 
-            while driver.variables:
-                driver.variables.remove(driver.variables[0])
+                keyed_interp_mode = settings.bake_interpolation_mode if use_bake_interpolation else "STEP"
+                _apply_baked_interpolation(
+                    id_block=target_block,
+                    prop_name=driver_prop_name,
+                    interpolation_mode=keyed_interp_mode,
+                )
+            else:
+                fcurve = target_block.driver_add(f'["{driver_prop_name}"]')
+                driver = fcurve.driver
+                driver.type = "SCRIPTED"
 
-            frame_var = driver.variables.new()
-            frame_var.name = "frame_var"
-            frame_var.type = "SINGLE_PROP"
-            frame_var.targets[0].id_type = "SCENE"
-            frame_var.targets[0].id = scene
-            frame_var.targets[0].data_path = "frame_current"
+                while driver.variables:
+                    driver.variables.remove(driver.variables[0])
 
-            base_expr = _build_expression(
-                min_value=settings.min_value,
-                max_value=settings.max_value,
-                interval_frames=interval_frames,
-                value_mode=settings.value_mode,
-                phase=phase,
-                randomization_type=settings.randomization_type,
-                object_random_value_a=object_random_value_a,
-                object_random_value_b=object_random_value_b,
-                object_seed=object_seed,
-            )
-            driver.expression = _wrap_frame_range(
-                base_expr,
-                use_start=settings.use_start_frame,
-                start_frame=settings.start_frame,
-                use_end=settings.use_end_frame,
-                end_frame=settings.end_frame,
-            )
+                frame_var = driver.variables.new()
+                frame_var.name = "frame_var"
+                frame_var.type = "SINGLE_PROP"
+                frame_var.targets[0].id_type = "SCENE"
+                frame_var.targets[0].id = scene
+                frame_var.targets[0].data_path = "frame_current"
+
+                base_expr = _build_expression(
+                    min_value=settings.min_value,
+                    max_value=settings.max_value,
+                    interval_frames=interval_frames,
+                    value_mode=settings.value_mode,
+                    phase=phase,
+                    randomization_type=settings.randomization_type,
+                    object_random_value_a=object_random_value_a,
+                    object_random_value_b=object_random_value_b,
+                    object_seed=object_seed,
+                )
+                # Always wrap with frame range for driver mode consistency
+                driver.expression = _wrap_frame_range(
+                    base_expr,
+                    start_frame=settings.start_frame,
+                    end_frame=settings.end_frame,
+                )
             added_count += 1
+
+        scene.frame_set(current_frame)
 
         if added_count == 0 and settings.target_mode == "DATA":
             self.report({"ERROR"}, "No selected objects have object data")
             return {"CANCELLED"}
 
-        msg = f"Added driver on {added_count} target(s)"
+        action_label = "Baked keyed property on" if is_bake_mode else "Added driver on"
+        msg = f"{action_label} {added_count} target(s)"
         if skipped_no_data > 0:
             msg += f"; skipped {skipped_no_data} object(s) without data"
 
         self.report({"INFO"}, msg)
+
+        # Refresh the UI to show updated driver/property state
+        for area in context.screen.areas:
+            area.tag_redraw()
+
         return {"FINISHED"}
 
 
@@ -364,6 +478,7 @@ class OBJECT_OT_clear_beat_flipper_drivers(Operator):
             return {"CANCELLED"}
 
         removed_drivers = 0
+        removed_key_curves = 0
         skipped_no_data = 0
         for obj in selected_objects:
             target_block = obj
@@ -385,13 +500,19 @@ class OBJECT_OT_clear_beat_flipper_drivers(Operator):
 
             for key in list(target_block.keys()):
                 if _is_beat_flipper_property(key) or _is_beat_flipper_phase_property(key):
+                    removed_key_curves += _remove_fcurves_for_property(target_block, key)
                     del target_block[key]
 
-        msg = f"Removed {removed_drivers} driver(s)"
+        msg = f"Removed {removed_drivers} driver(s) and {removed_key_curves} keyed curve(s)"
         if skipped_no_data > 0:
             msg += f"; skipped {skipped_no_data} object(s) without data"
 
         self.report({"INFO"}, msg)
+
+        # Refresh the UI to show updated driver/property state
+        for area in context.screen.areas:
+            area.tag_redraw()
+
         return {"FINISHED"}
 
 
@@ -410,6 +531,7 @@ class OBJECT_OT_remove_latest_beat_flipper_driver(Operator):
             return {"CANCELLED"}
 
         removed_drivers = 0
+        removed_key_curves = 0
         skipped_no_data = 0
         for obj in selected_objects:
             target_block = obj
@@ -431,17 +553,27 @@ class OBJECT_OT_remove_latest_beat_flipper_driver(Operator):
                 pass
 
             if latest_prop in target_block:
+                removed_key_curves += _remove_fcurves_for_property(target_block, latest_prop)
                 del target_block[latest_prop]
 
             phase_prop = _phase_property_name(latest_prop)
             if phase_prop in target_block:
+                removed_key_curves += _remove_fcurves_for_property(target_block, phase_prop)
                 del target_block[phase_prop]
 
-        msg = f"Removed latest driver on {removed_drivers} target(s)"
+        msg = (
+            f"Removed latest driver on {removed_drivers} target(s)"
+            f" and {removed_key_curves} keyed curve(s)"
+        )
         if skipped_no_data > 0:
             msg += f"; skipped {skipped_no_data} object(s) without data"
 
         self.report({"INFO"}, msg)
+
+        # Refresh the UI to show updated driver/property state
+        for area in context.screen.areas:
+            area.tag_redraw()
+
         return {"FINISHED"}
 
 
@@ -473,31 +605,32 @@ class VIEW3D_PT_beat_flipper_panel(Panel):
 
         layout.separator()
         box = layout.box()
-        box.label(text="Frame Range", icon="TIME")
+        box.label(text="Keyed Mode", icon="KEYFRAME")
+        box.prop(settings, "bake_as_keyed_property")
 
-        row = box.row(align=True)
-        row.prop(settings, "use_start_frame")
-        sub = row.row(align=True)
-        sub.enabled = settings.use_start_frame
-        sub.prop(settings, "start_frame", text="")
+        if settings.bake_as_keyed_property:
+            box.label(text="Frame Range (Required)", icon="TIME")
+            row = box.row(align=True)
+            row.prop(settings, "start_frame", text="Start")
+            row.prop(settings, "end_frame", text="End")
 
-        row = box.row(align=True)
-        row.prop(settings, "use_end_frame")
-        sub = row.row(align=True)
-        sub.enabled = settings.use_end_frame
-        sub.prop(settings, "end_frame", text="")
+            interp_row = box.row(align=True)
+            interp_row.prop(settings, "bake_use_interpolation")
 
-        frame_range_invalid = (
-            settings.use_start_frame
-            and settings.use_end_frame
-            and settings.end_frame < settings.start_frame
-        )
-        if frame_range_invalid:
-            row = box.row()
-            row.alert = True
-            row.label(text="End Frame must be >= Start Frame", icon="ERROR")
+            interp_type_row = box.row(align=True)
+            interp_type_row.enabled = settings.bake_use_interpolation
+            interp_type_row.prop(settings, "bake_interpolation_mode", text="")
+
+            frame_range_invalid = settings.end_frame < settings.start_frame
+            if frame_range_invalid:
+                row = box.row()
+                row.alert = True
+                row.label(text="End Frame must be >= Start Frame", icon="ERROR")
 
         layout.separator()
+        # Validate: if keyed mode is on, frame limits must be valid
+        frame_range_invalid = settings.end_frame < settings.start_frame
+        
         add_row = layout.row()
         add_row.enabled = not frame_range_invalid
         add_row.operator(OBJECT_OT_add_beat_flipper_driver.bl_idname, icon="DRIVER")
