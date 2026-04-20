@@ -24,6 +24,10 @@ DRIVER_PROP_NAME = "beat_flipper_value"
 PHASE_PROP_NAME = "beat_flipper_phase"
 
 
+def _indexed_driver_property_name(index):
+    return f"{DRIVER_PROP_NAME}_{index:04d}"
+
+
 def _next_driver_property_name(id_block):
     """Return the next available beat flipper property name for an ID block."""
     if DRIVER_PROP_NAME not in id_block:
@@ -39,7 +43,7 @@ def _next_driver_property_name(id_block):
         if suffix.isdigit():
             max_index = max(max_index, int(suffix))
 
-    return f"{DRIVER_PROP_NAME}_{max_index + 1}"
+    return _indexed_driver_property_name(max_index + 1)
 
 
 def _phase_property_name(driver_prop_name):
@@ -56,10 +60,7 @@ def _is_beat_flipper_phase_property(prop_name):
 
 
 def _latest_driver_property_name(id_block):
-    if DRIVER_PROP_NAME not in id_block:
-        return None
-
-    latest_name = DRIVER_PROP_NAME
+    latest_name = DRIVER_PROP_NAME if DRIVER_PROP_NAME in id_block else None
     latest_index = 0
     prefix = f"{DRIVER_PROP_NAME}_"
     for key in id_block.keys():
