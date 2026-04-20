@@ -179,4 +179,4 @@ git push origin v1.2.0
 
 ## License
 
-This project is provided as-is. See [LICENSE](LICENSE) if present.
+This project is provided as-is. See [COPYING](COPYING) if present.
