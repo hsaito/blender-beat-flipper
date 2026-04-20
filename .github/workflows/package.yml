@@ -1,0 +1,53 @@
+name: Package Blender Addon
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read version from __init__.py
+        id: version
+        run: |
+          VERSION=$(python3 - <<'EOF'
+          import ast, sys
+          with open("beat_flipper_driver/__init__.py") as f:
+              tree = ast.parse(f.read())
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Assign):
+                  for t in node.targets:
+                      if isinstance(t, ast.Name) and t.id == "bl_info":
+                          d = ast.literal_eval(node.value)
+                          print(".".join(str(x) for x in d["version"]))
+                          sys.exit(0)
+          EOF
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build zip package
+        run: |
+          mkdir -p dist
+          zip -r dist/beat_flipper_driver-${{ steps.version.outputs.version }}.zip \
+            beat_flipper_driver/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: beat_flipper_driver-${{ steps.version.outputs.version }}
+          path: dist/beat_flipper_driver-${{ steps.version.outputs.version }}.zip
+          retention-days: 90
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/beat_flipper_driver-${{ steps.version.outputs.version }}.zip
+          generate_release_notes: true
