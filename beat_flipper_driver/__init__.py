@@ -95,15 +95,56 @@ def _latest_driver_property_name(id_block):
 
 def _remove_fcurves_for_property(id_block, property_name):
     """Remove action fcurves bound to a custom property data path."""
-    if not id_block.animation_data or not id_block.animation_data.action:
-        return 0
-
     data_path = f'["{property_name}"]'
-    action = id_block.animation_data.action
-    to_remove = [fcurve for fcurve in action.fcurves if fcurve.data_path == data_path]
-    for fcurve in to_remove:
-        action.fcurves.remove(fcurve)
-    return len(to_remove)
+    removed_count = 0
+
+    for fcurves in _iter_action_fcurve_collections(id_block):
+        to_remove = [fcurve for fcurve in fcurves if fcurve.data_path == data_path]
+        for fcurve in to_remove:
+            try:
+                fcurves.remove(fcurve)
+                removed_count += 1
+            except (AttributeError, RuntimeError, TypeError):
+                # Some Blender action containers are read-only for specific data layouts.
+                continue
+
+    return removed_count
+
+
+def _iter_action_fcurve_collections(id_block):
+    """Yield fcurve collections for both legacy and layered Blender actions."""
+    anim_data = getattr(id_block, "animation_data", None)
+    if not anim_data:
+        return
+
+    action = getattr(anim_data, "action", None)
+    if not action:
+        return
+
+    legacy_fcurves = getattr(action, "fcurves", None)
+    if legacy_fcurves is not None:
+        yield legacy_fcurves
+        return
+
+    for layer in getattr(action, "layers", ()):
+        for strip in getattr(layer, "strips", ()):
+            channelbags = getattr(strip, "channelbags", None)
+            if channelbags is None:
+                continue
+
+            action_slot = getattr(anim_data, "action_slot", None)
+            if action_slot and hasattr(channelbags, "for_slot"):
+                channelbag = channelbags.for_slot(action_slot)
+                if channelbag is not None:
+                    bag_fcurves = getattr(channelbag, "fcurves", None)
+                    if bag_fcurves is not None:
+                        yield bag_fcurves
+                continue
+
+            for channelbag in channelbags:
+                bag_fcurves = getattr(channelbag, "fcurves", None)
+                if bag_fcurves is not None:
+                    yield bag_fcurves
 
 
 def _configure_property_ui(id_block, property_name, min_value, max_value):
@@ -245,23 +286,21 @@ def _step_at_frame(interval_frames, phase, frame):
 
 def _apply_baked_interpolation(id_block, prop_name, interpolation_mode):
     """Set interpolation style for baked keyframes on an ID custom property."""
-    if not id_block.animation_data or not id_block.animation_data.action:
-        return
-
     data_path = f'["{prop_name}"]'
-    for fcurve in id_block.animation_data.action.fcurves:
-        if fcurve.data_path != data_path:
-            continue
+    for fcurves in _iter_action_fcurve_collections(id_block):
+        for fcurve in fcurves:
+            if fcurve.data_path != data_path:
+                continue
 
-        for point in fcurve.keyframe_points:
-            if interpolation_mode == "STEP":
-                point.interpolation = "CONSTANT"
-            elif interpolation_mode == "LERP":
-                point.interpolation = "LINEAR"
-            else:
-                point.interpolation = "BEZIER"
-                point.handle_left_type = "AUTO_CLAMPED"
-                point.handle_right_type = "AUTO_CLAMPED"
+            for point in fcurve.keyframe_points:
+                if interpolation_mode == "STEP":
+                    point.interpolation = "CONSTANT"
+                elif interpolation_mode == "LERP":
+                    point.interpolation = "LINEAR"
+                else:
+                    point.interpolation = "BEZIER"
+                    point.handle_left_type = "AUTO_CLAMPED"
+                    point.handle_right_type = "AUTO_CLAMPED"
 
 
 def _on_bake_toggle(self, _context):
