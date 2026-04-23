@@ -73,7 +73,8 @@ The layer is created either on the object itself or on its object-data block, de
 |---------|-------------|
 | **Min** | Lower bound of the output value (0.0 – 1.0). |
 | **Max** | Upper bound of the output value (0.0 – 1.0). |
-| **BPM** | Beats per minute. Determines how often the value changes. Interval is computed from BPM and the scene's FPS. |
+| **BPM** | Beats per minute. Must be greater than 0. Determines how often the value changes. |
+| **BPM Multiplier** | Multiplies BPM for interval calculation. Default is `1.0`. Must be greater than 0. Useful for creating faster/slower beat layers from the same base BPM. |
 
 ### Value Mode
 
