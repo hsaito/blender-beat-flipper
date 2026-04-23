@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Beat Flipper Driver",
     "author": "Hideki Saito",
-    "version": (1, 2, 1),
+    "version": (1, 3, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Beat Flip",
     "description": "Adds BPM-based custom-property drivers to selected objects",
@@ -343,6 +343,14 @@ class BeatFlipperSettings(PropertyGroup):
         min=1.0,
         soft_max=300.0,
     )
+    bpm_multiplier: FloatProperty(
+        name="BPM Multiplier",
+        description="Multiplier applied to BPM when calculating beat interval",
+        default=1.0,
+        min=0.001,
+        soft_min=0.25,
+        soft_max=4.0,
+    )
     value_mode: EnumProperty(
         name="Value Mode",
         description="How value is chosen on each beat",
@@ -455,11 +463,25 @@ class OBJECT_OT_add_beat_flipper_driver(Operator):
             self.report({"ERROR"}, "Min must be less than or equal to Max")
             return {"CANCELLED"}
 
+        if settings.bpm <= 0.0:
+            self.report({"ERROR"}, "BPM must be greater than zero")
+            return {"CANCELLED"}
+
+        if settings.bpm_multiplier <= 0.0:
+            self.report({"ERROR"}, "BPM Multiplier must be greater than zero")
+            return {"CANCELLED"}
+
         scene = context.scene
         fps = scene.render.fps / scene.render.fps_base
+        effective_bpm = settings.bpm * settings.bpm_multiplier
+
+        if effective_bpm <= 0.0:
+            self.report({"ERROR"}, "Effective BPM must be greater than zero")
+            return {"CANCELLED"}
+
         # interval_frames = seconds_per_beat * frames_per_second
-        # = (60 / bpm) * fps
-        interval_frames = (60.0 / settings.bpm) * fps
+        # = (60 / effective_bpm) * fps
+        interval_frames = (60.0 / effective_bpm) * fps
 
         if interval_frames <= 0.0:
             self.report({"ERROR"}, "Calculated interval must be greater than zero")
@@ -731,6 +753,7 @@ class VIEW3D_PT_beat_flipper_panel(Panel):
         col.prop(settings, "min_value")
         col.prop(settings, "max_value")
         col.prop(settings, "bpm")
+        col.prop(settings, "bpm_multiplier", slider=True)
 
         layout.separator()
 
