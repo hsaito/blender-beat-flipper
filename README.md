@@ -172,8 +172,8 @@ The included GitHub Actions workflow (`.github/workflows/package.yml`) automatic
 To publish a new release, push a tag:
 
 ```bash
-git tag v1.2.1
-git push origin v1.2.1
+git tag v1.3.0
+git push origin v1.3.0
 ```
 
 ---
