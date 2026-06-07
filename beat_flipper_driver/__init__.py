@@ -4,7 +4,7 @@
 bl_info = {
     "name": "Beat Flipper Driver",
     "author": "Hideki Saito",
-    "version": (1, 3, 0),
+    "version": (1, 4, 0),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Beat Flip",
     "description": "Adds BPM-based custom-property drivers to selected objects",
@@ -799,8 +799,8 @@ class VIEW3D_PT_beat_flipper_panel(Panel):
         add_row = layout.row()
         add_row.enabled = not frame_range_invalid
         add_row.operator(OBJECT_OT_add_beat_flipper_driver.bl_idname, icon="DRIVER")
-        layout.operator(OBJECT_OT_remove_latest_beat_flipper_driver.bl_idname, icon="REMOVE")
-        layout.operator(OBJECT_OT_clear_beat_flipper_drivers.bl_idname, icon="TRASH")
+        layout.operator(OBJECT_OT_remove_latest_beat_flipper_driver.bl_idname, text=bpy.app.translations.pgettext("Remove Latest Driver"),icon="REMOVE")
+        layout.operator(OBJECT_OT_clear_beat_flipper_drivers.bl_idname, text=bpy.app.translations.pgettext("Clear Beat-Flipper Drivers"), icon="TRASH")
 
 
 classes = (
@@ -811,15 +811,86 @@ classes = (
     VIEW3D_PT_beat_flipper_panel,
 )
 
+translation_dict = {
+    "ja_JP": {
+        # Operator ラベル・説明
+        ("*", "Target"): "対象",
+        ("*", "Where to add the driver property"): "ドライバープロパティを追加する場所",
+        ("*", "Min"): "最小値",
+        ("*", "Minimum output value"): "出力の最小値",
+        ("*", "Max"): "最大値",
+        ("*", "Maximum output value"): "出力の最大値",
+        ("*", "BPM"): "BPM",
+        ("*", "Beats per minute used to calculate change interval"): "変化間隔を計算するための1分あたりの拍数",
+        ("*", "BPM Multiplier"): "BPM倍率",
+        ("*", "Multiplier applied to BPM when calculating beat interval"): "ビート間隔を計算する際にBPMに適用される倍率",
+        ("*", "Value Mode"): "値モード",
+        ("*", "How value is chosen on each beat"): "各ビートで値がどのように選ばれるか",
+        ("*", "Randomized"): "ランダム",
+        ("*", "Pick a random value between Min and Max each beat"): "各ビートでMinとMaxの間のランダムな値を選択",
+        ("*", "Static (Min/Max)"): "静的（最小/最大）",
+        ("*",  "Alternate between Min and Max each beat"): "各ビートでMinとMaxを交互に切り替え",
+        ("*", "Randomization Type"): "ランダム化タイプ",
+        ("*", "How randomized mode generates values"): "ランダム化モードがどのように値を生成するか",
+        ("*", "Per Phase"): "フェーズごと",
+        ("*", "Generate a new value at each BPM phase"): "各BPMフェーズで新しい値を生成",
+        ("*", "Per Object Constant"): "オブジェクトごと定数",
+        ("*", "Use two random values per object and alternate between them across phases"): "オブジェクトごとに2つのランダムな値を使用し、フェーズごとにそれらを交互に切り替える",
+        ("*", "Value Scope"): "値の範囲",
+        ("*", "Whether all objects share the same random values or each gets its own"): "すべてのオブジェクトが同じランダム値を共有するか、それぞれが独自の値を持つか",
+        ("*", "Per Object"): "オブジェクトごと",
+        ("*", "Each object receives its own independent random values"): "各オブジェクトが独自のランダム値を受け取る",
+        ("*", "Shared Across Objects"): "オブジェクト間で共有",
+        ("*", "All selected objects use the same random values"): "すべての選択されたオブジェクトが同じランダム値を使用",
+        ("*", "Transition Mode"): "遷移モード",
+        ("*", "How transitions align across selected objects (disabled in keyed mode)"): "選択したオブジェクト間の遷移の整列方法（キーフレームモードでは無効）",
+        ("*", "Synchronized"): "同期",
+        ("*", "All objects change at the same time"): "すべてのオブジェクトが同時に変化",
+        ("*", "Randomized Between Objects"): "オブジェクト間でランダム",
+        ("*", "Each object gets a random phase offset"): "各オブジェクトがランダムな位相オフセットを得る",
+        ("*", "Phase Offset"): "位相オフセット",
+        ("*", "Offset the beat pattern start in frames (disabled in keyed mode)"): "ビートパターンの開始をフレーム単位でオフセット（キーフレームモードでは無効）",
+        ("*", "Start Frame"): "開始フレーム",
+        ("*", "First frame where the beat driver is active (required for keyed mode)"): "ビートドライバーが有効な最初のフレーム（キーフレームモードで必須）",
+        ("*", "End Frame"): "終了フレーム",
+        ("*", "Last frame where the beat driver is active (required for keyed mode)"): "ビートドライバーが有効な最後のフレーム（キーフレームモードで必須）",
+        ("*", "Keyed Mode"): "キーフレームモード",
+        ("*", "Bake As Keyed Property"): "キーフレームプロパティとしてベイク",
+        ("*", (
+            "Insert keyframes for the custom property within the enabled frame range "
+            "instead of creating a scripted driver"
+        )): (
+            "スクリプトドライバーを作成する代わりに、"
+            "有効なフレーム範囲内にカスタムプロパティのキーフレームを挿入します"),
+        ("*", "Use Interpolation"): "補間を使用",
+        ("*", "Interpolate between baked change points"): "ベイクされた変化点の間を補間",
+        ("*", "Interpolation Type"): "補間タイプ",
+        ("*", "Interpolation style for baked keyframes"): "ベイクされたキーフレームの補間スタイル",
+        ("*", "Lerp (Linear)"): "線形補間",
+        ("*", "Use linear interpolation between keys"): "キー間を線形補間で使用",
+        ("*", "Smoothstep"): "スムースステップ",
+        ("*", "Frame Range (Required)"): "フレーム範囲（必須）",
+        ("*", "End Frame must be >= Start Frame"): "終了フレームは開始フレーム以上でなければなりません",
+        ("*", "Add Driver"): "ドライバーを追加",
+        ("*", "Add a new beat-flipper driver on selected objects"): "選択したオブジェクトに新しいビートフリッパードライバーを追加",
+        ("*", "Clear Beat-Flipper Drivers"): "ビートフリッパードライバーをクリア",
+        ("*", "Remove all beat-flipper drivers and properties from selected objects"): "選択したオブジェクトからすべてのビートフリッパードライバーとプロパティを削除",
+        ("*", "Remove Latest Driver"): "最新のドライバーを削除",
+        ("*", "Remove only the most recently added beat-flipper driver per selected object"): "選択したオブジェクトごとに、最後に追加されたビートフリッパードライバーのみを削除",
+    }
+}
+
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
 
     bpy.types.Scene.beat_flipper_settings = PointerProperty(type=BeatFlipperSettings)
+    bpy.app.translations.register(__name__, translation_dict)
 
 
 def unregister():
+    bpy.app.translations.unregister(__name__)
     del bpy.types.Scene.beat_flipper_settings
 
     for cls in reversed(classes):
